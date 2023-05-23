@@ -99,6 +99,29 @@ impl<'a> Compressor<'a> {
         matches!(stmt, Statement::DebuggerStatement(_)) && self.options.drop_debugger
     }
 
+    fn drop_empty_variable_declaration<'b>(&self, stmt: &'b Statement<'a>) -> bool {
+        if let Statement::Declaration(Declaration::VariableDeclaration(decl)) = stmt {
+            return decl.declarations.is_empty();
+        }
+        false
+    }
+
+    fn drop_unused_variable_declarator<'b>(&mut self, stmt: &'b mut Statement<'a>) {
+        if let Statement::Declaration(Declaration::VariableDeclaration(decl)) = stmt {
+            decl.declarations.retain(|decl| {
+                if let BindingPattern::BindingIdentifier(ident) = &decl.id
+                && decl.init.is_none()
+                && self.semantic.symbol_table.get_resolved_references(ident.symbol_id).is_empty() {
+                    let scope_id = self.semantic.symbol_table.get_scope_id(ident.symbol_id);
+                    self.semantic.scope_tree.remove_binding(scope_id, &ident.name);
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+    }
+
     /// Join consecutive var statements
     fn join_vars<'b>(&mut self, stmts: &'b mut Vec<'a, Statement<'a>>) {
         // Collect all the consecutive ranges that contain joinable vars.
@@ -257,8 +280,11 @@ impl<'a, 'b> VisitMut<'a, 'b> for Compressor<'a> {
         self.join_vars(stmts);
 
         for stmt in stmts.iter_mut() {
+            self.drop_unused_variable_declarator(stmt);
             self.visit_statement(stmt);
         }
+
+        stmts.retain(|stmt| !self.drop_empty_variable_declaration(stmt));
     }
 
     fn visit_statement(&mut self, stmt: &'b mut Statement<'a>) {

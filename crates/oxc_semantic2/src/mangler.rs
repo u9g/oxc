@@ -63,7 +63,7 @@ impl Mangler {
         let mut total_number_of_slots: Slot = 0;
 
         // All symbols with their assigned slots
-        let mut slots: IndexVec<SymbolId, Slot> = index_vec![0; symbol_table.len()];
+        let mut slots: IndexVec<SymbolId, Option<Slot>> = index_vec![None; symbol_table.len()];
 
         // Keep track of the maximum slot number for each scope
         let mut max_slot_for_scope = vec![0; scope_tree.len()];
@@ -80,7 +80,7 @@ impl Mangler {
 
             // `bindings` are stored in order, traverse and increment slot
             for symbol_id in bindings.values() {
-                slots[*symbol_id] = slot;
+                slots[*symbol_id] = Some(slot);
                 slot += 1;
             }
 
@@ -112,7 +112,7 @@ impl Mangler {
                     break name;
                 }
             };
-            // All symbols for the same frequency gets the same
+            // All symbols for the same frequency gets the same name
             for symbol_id in &freq.symbol_ids {
                 semantic.symbol_table.names[*symbol_id] = name.clone();
             }
@@ -122,17 +122,19 @@ impl Mangler {
     fn tally_slot_frequencies(
         symbol_table: &SymbolTable,
         total_number_of_slots: usize,
-        slots: &IndexVec<SymbolId, Slot>,
+        slots: &IndexVec<SymbolId, Option<Slot>>,
     ) -> Vec<SlotFrequency> {
         let mut frequencies = vec![SlotFrequency::default(); total_number_of_slots];
         for (symbol_id, slot) in slots.iter_enumerated() {
             if !symbol_table.get_flag(symbol_id).is_variable() {
                 continue;
             }
-            let index = *slot;
-            frequencies[index].slot = *slot;
-            frequencies[index].frequency += symbol_table.resolved_references[symbol_id].len();
-            frequencies[index].symbol_ids.push(symbol_id);
+            if let Some(slot) = slot.as_ref().copied() {
+                let index = slot;
+                frequencies[index].slot = slot;
+                frequencies[index].frequency += symbol_table.resolved_references[symbol_id].len();
+                frequencies[index].symbol_ids.push(symbol_id);
+            }
         }
         frequencies.sort_by_key(|x| (std::cmp::Reverse(x.frequency)));
         frequencies
