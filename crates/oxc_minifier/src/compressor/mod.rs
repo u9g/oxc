@@ -1,5 +1,6 @@
 #![allow(clippy::unused_self)]
 
+mod conditions;
 mod fold;
 
 use oxc_allocator::{Allocator, Vec};
@@ -49,7 +50,7 @@ pub struct Compressor<'a> {
     options: CompressOptions,
 }
 
-const SPAN: Span = Span::new(0, 0);
+pub(crate) const SPAN: Span = Span::new(0, 0);
 
 impl<'a> Compressor<'a> {
     pub fn new(allocator: &'a Allocator, semantic: Semantic, options: CompressOptions) -> Self {
@@ -62,6 +63,12 @@ impl<'a> Compressor<'a> {
     }
 
     /* Utilities */
+
+    /// A dummy expression used in `std::mem::replace` situations
+    fn dummy_expr(&mut self) -> Expression<'a> {
+        let null = self.hir.null_literal(SPAN);
+        self.hir.literal_null_expression(null)
+    }
 
     /// `void 0`
     fn create_void_0(&mut self) -> Expression<'a> {
@@ -150,8 +157,8 @@ impl<'a> Compressor<'a> {
     fn compress_while<'b>(&mut self, stmt: &'b mut Statement<'a>) {
         if let Statement::WhileStatement(while_stmt) = stmt
             && self.options.loops {
-            let dummy_test = self.hir.this_expression(SPAN);
-            let test = std::mem::replace(&mut while_stmt.test, dummy_test);
+            let dummy_expr = self.dummy_expr();
+            let test = std::mem::replace(&mut while_stmt.test, dummy_expr);
             let body = while_stmt.body.take();
             *stmt = self.hir.for_statement(SPAN, None, Some(test), None, body);
         }
@@ -266,6 +273,7 @@ impl<'a, 'b> VisitMut<'a, 'b> for Compressor<'a> {
     }
 
     fn visit_statement(&mut self, stmt: &'b mut Statement<'a>) {
+        self.try_replace_if(stmt);
         self.compress_block(stmt);
         self.compress_while(stmt);
         self.visit_statement_match(stmt);
