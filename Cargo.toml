@@ -11,6 +11,53 @@ keywords    = ["JavaScript", "TypeScript", "parser"]
 license     = "MIT"
 repository  = "https://github.com/Boshen/oxc"
 
+# https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#lints
+[workspace.lints.clippy]
+all = 'warn'
+# I want to write the best Rust code so both pedantic and nursery is enabled.
+# We should only disable rules globally if they are either false positives, chaotic, or does not make sense.
+pedantic = 'warn'
+nursery = 'warn'
+# ** restriction **
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+# I like the explicitness of this rule as it removes confusion around `clone`.
+# This increases readability, avoids `clone` mindlessly and heap allocating on accident.
+clone_on_ref_ptr = "warn"
+# These two are mutually exclusive, I like `mod.rs` files for better fuzzy searches on module entries.
+self_named_module_files = "warn" # "-Wclippy::mod_module_files",
+empty_drop = "warn"
+empty_structs_with_brackets = "warn"
+exit = "warn"
+filetype_is_file = "warn"
+get_unwrap = "warn"
+impl_trait_in_params = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+unnecessary_safety_comment = "warn"
+# "-Wclippy::same_name_method", # broke bitflags v2
+# "-Wclippy::undocumented_unsafe_blocks" # todo
+# ** pedantic **
+# This rule is too pedantic, I don't want to force this because naming things are hard.
+module_name_repetitions = "allow"
+# #[must_use] is creating too much noise for this codebase, it does not add much value execept nagging
+# the programmer to add a #[must_use] after clippy has been run.
+# Having #[must_use] every where also hinders readability.
+must_use_candidate = "allow"
+# Generated from the `index_vec` crate.
+# this error originates in the macro `$crate::__define_index_type_inner` which comes from the expansion of the macro `define_index_type`
+used_underscore_binding =  "allow"
+doc_markdown = "allow"
+# ** nursery **
+  # `const` functions do not make sense for our project because this is not a `const` library.
+  # This rule also confuses new comers and forces them to add `const` blindlessly without any reason.
+missing_const_for_fn = "allow"
+# ** style **
+# Having both `new` and `default` for a struct is confusing, just implement the more appropriate one.
+new_without_default = "allow"
+
 [workspace.dependencies]
 # Release:
 # * Edit these versions, commit
