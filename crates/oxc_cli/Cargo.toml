@@ -41,3 +41,4 @@ miette            = { workspace = true, features = ["fancy-no-backtrace"] }
 rayon             = { workspace = true }
 rustc-hash        = { workspace = true }
 # git2 = { version = "0.16.1", default_features = false }
+path-calculate = "0.1.3"

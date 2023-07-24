@@ -1430,6 +1430,7 @@ dependencies = [
  "oxc_semantic",
  "oxc_span",
  "oxc_type_synthesis",
+ "path-calculate",
  "rayon",
  "rustc-hash",
 ]
@@ -1527,14 +1528,19 @@ dependencies = [
  "oxc_formatter",
  "oxc_macros",
  "oxc_parser",
+ "oxc_query",
  "oxc_semantic",
  "oxc_span",
  "oxc_syntax",
+ "path-calculate",
  "phf",
  "regex",
  "rust-lapper",
  "rustc-hash",
+ "serde",
  "serde_json",
+ "serde_yaml",
+ "trustfall",
 ]
 
 [[package]]

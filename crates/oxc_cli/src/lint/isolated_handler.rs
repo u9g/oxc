@@ -169,7 +169,7 @@ impl IsolatedLintHandler {
         };
 
         let lint_ctx = LintContext::new(&Rc::new(semantic_ret.semantic));
-        let result = linter.run(lint_ctx);
+        let result = linter.run(lint_ctx, vec![]);
 
         if result.is_empty() {
             return None;

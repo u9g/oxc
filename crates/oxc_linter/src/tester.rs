@@ -144,6 +144,6 @@ impl Tester {
             .unwrap_or_else(|| panic!("Rule not found: {}", &self.rule_name));
         let rule = rule.read_json(config);
         let lint_context = LintContext::new(&Rc::new(semantic_ret.semantic));
-        Linter::from_rules(vec![rule]).with_fix(is_fix).run(lint_context)
+        Linter::from_rules(vec![rule]).with_fix(is_fix).run(lint_context, vec![])
     }
 }

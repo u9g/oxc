@@ -10,13 +10,16 @@ mod disable_directives;
 mod fixer;
 mod globals;
 mod jest_ast_util;
+mod plugin;
 pub mod rule;
 mod rules;
 
-use std::{fs, io::Write, rc::Rc};
+use std::{env, fs, io::Write, rc::Rc};
 
 pub use fixer::{FixResult, Fixer, Message};
+use oxc_query::schema;
 pub(crate) use oxc_semantic::AstNode;
+use plugin::LinterPlugin;
 use rustc_hash::FxHashMap;
 
 pub use crate::{
@@ -25,10 +28,10 @@ pub use crate::{
     rules::{RuleEnum, RULES},
 };
 
-#[derive(Debug)]
 pub struct Linter {
     rules: Vec<RuleEnum>,
     fix: bool,
+    plugin: Option<LinterPlugin>,
 }
 
 impl Linter {
@@ -42,7 +45,11 @@ impl Linter {
     }
 
     pub fn from_rules(rules: Vec<RuleEnum>) -> Self {
-        Self { rules, fix: false }
+        let plugin = env::var("OXC_PLUGIN")
+            .ok()
+            .is_some_and(|value| !value.is_empty())
+            .then(|| LinterPlugin::new(schema()));
+        Self { rules, fix: false, plugin }
     }
 
     pub fn has_fix(&self) -> bool {
@@ -56,6 +63,16 @@ impl Linter {
     #[must_use]
     pub fn with_fix(mut self, yes: bool) -> Self {
         self.fix = yes;
+        self
+    }
+
+    pub(crate) fn only_use_query_rule(mut self, rule_name: &str) -> Self {
+        self.rules.clear();
+
+        let mut plugin = self.plugin.take().unwrap();
+        plugin.rules =
+            plugin.rules.iter().filter(|x| x.name == rule_name).cloned().collect::<Vec<_>>();
+        self.plugin.replace(plugin);
         self
     }
 
@@ -80,7 +97,14 @@ impl Linter {
         Self::from_rules(rules)
     }
 
-    pub fn run<'a>(&self, ctx: LintContext<'a>) -> Vec<Message<'a>> {
+    /// relative_file_path_parts should be a vec of path parts relative to the file being linted
+    /// ie: if the linter is called from /, and the linted file is /apple/index.ts, then relative_file_path_parts is vec!["apple", "index.ts"]
+    pub fn run<'a>(
+        &self,
+        ctx: LintContext<'a>,
+        // The string is optional because some OsString's may not be represented as String's
+        relative_file_path_parts: Vec<Option<String>>,
+    ) -> Vec<Message<'a>> {
         let semantic = Rc::clone(ctx.semantic());
         let mut ctx = ctx.with_fix(self.fix);
         for node in semantic.nodes().iter() {
@@ -95,6 +119,10 @@ impl Linter {
                 ctx.with_rule_name(rule.name());
                 rule.run_on_symbol(symbol, &ctx);
             }
+        }
+
+        if let Some(plugin) = &self.plugin {
+            plugin.run(&mut ctx, semantic, relative_file_path_parts);
         }
 
         ctx.into_message()

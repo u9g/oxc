@@ -1,7 +1,7 @@
 use std::{
     fs,
     io::{self, BufWriter, Write},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
@@ -18,6 +18,7 @@ use oxc_linter::{FixResult, Fixer, LintContext, Linter};
 use oxc_parser::{Parser, ParserReturn};
 use oxc_semantic::{SemanticBuilder, SemanticBuilderReturn};
 use oxc_span::SourceType;
+use path_calculate::Calculate;
 use rayon::prelude::*;
 
 use super::{
@@ -269,7 +270,20 @@ fn run_for_file(path: &Path, runtime_data: &LinterRuntimeData) -> Result<()> {
     // .try_for_each(|path| run_for_file(&path, runtime_data))?;
 
     let lint_ctx = LintContext::new(&Rc::new(semantic));
-    let result = linter.run(lint_ctx);
+    let result = linter.run(
+        lint_ctx,
+        path.related_to(Path::new("."))
+            .unwrap()
+            .components()
+            .filter_map(|component| {
+                let Component::Normal(s) = component else {
+                    return None;
+                };
+                Some(s)
+            })
+            .map(|s| s.to_str().map(std::string::ToString::to_string))
+            .collect::<Vec<_>>(),
+    );
 
     if result.is_empty() {
         return Ok(());

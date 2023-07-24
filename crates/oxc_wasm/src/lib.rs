@@ -188,7 +188,7 @@ impl Oxc {
 
             let semantic = Rc::new(semantic_ret.semantic);
             let lint_ctx = LintContext::new(&semantic);
-            let linter_ret = Linter::new().run(lint_ctx);
+            let linter_ret = Linter::new().run(lint_ctx, vec![Some("index.ts".to_owned())]);
             let diagnostics = linter_ret.into_iter().map(|e| e.error).collect();
             self.save_diagnostics(diagnostics);
         }
