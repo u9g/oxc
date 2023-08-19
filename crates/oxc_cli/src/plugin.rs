@@ -3,13 +3,14 @@ use std::{collections::BTreeMap, fs, path::PathBuf, rc::Rc, sync::Arc};
 use ignore::Walk;
 use located_yaml::{YamlElt, YamlLoader};
 use miette::{NamedSource, SourceSpan};
+use mini_v8::{Value, Values};
 use oxc_allocator::Allocator;
 use oxc_diagnostics::{
     miette::{self, Diagnostic},
     thiserror::{self, Error},
     Report,
 };
-use oxc_linter::LintContext;
+use oxc_linter::{Fix, LintContext, Message};
 use oxc_parser::Parser;
 use oxc_query::{schema, Adapter};
 use oxc_semantic::{SemanticBuilder, SemanticBuilderReturn};
@@ -26,12 +27,14 @@ enum SpanInfo {
 struct SingleSpanInfo {
     span_start: u64,
     span_end: u64,
+    fix: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct MultipleSpanInfo {
-    span_start: Box<[u64]>,
-    span_end: Box<[u64]>,
+    span_start: Vec<u64>,
+    span_end: Vec<u64>,
+    fix: Vec<Option<String>>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -43,6 +46,7 @@ pub struct InputQuery {
     pub reason: String,
     #[serde(skip_deserializing)]
     pub path: PathBuf,
+    pub post_transform: Option<String>,
     #[serde(default)]
     pub tests: QueryTests,
 }
@@ -139,6 +143,7 @@ impl LinterPlugin {
         Ok(Self { rules: deserialized_queries, schema })
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn run_plugin_rules(
         &self,
         ctx: &mut LintContext,
@@ -151,6 +156,8 @@ impl LinterPlugin {
         // NOTE: the 0 is technically wrong, but it's the right file which is enough
         let query_span = SourceSpan::new(0.into(), plugin.query.len().into());
 
+        let mv8 = mini_v8::MiniV8::new();
+
         for data_item in
             execute_query(self.schema, Arc::clone(&arc_adapter), &plugin.query, plugin.args.clone())
                 .map_err(|err| ErrorFromLinterPlugin::Trustfall {
@@ -159,91 +166,135 @@ impl LinterPlugin {
                     query_span,
                 })?
         {
-            {
-                let transformed_data_to_span =
-                    match (data_item.get("span_start"), data_item.get("span_end")) {
-                        (Some(FieldValue::List(x)), Some(FieldValue::List(y)))
-                            if matches!(x[0], FieldValue::Int64(_))
-                                && matches!(y[0], FieldValue::Int64(_)) =>
-                        {
-                            data_item
-                                .try_into_struct::<MultipleSpanInfo>()
-                                .map(SpanInfo::MultipleSpanInfo)
-                                .expect("to be able to convert into MultipleSpanInfo")
-                        }
-                        (Some(FieldValue::List(x)), Some(FieldValue::List(y)))
-                            if matches!(x[0], FieldValue::Uint64(_))
-                                && matches!(y[0], FieldValue::Uint64(_)) =>
-                        {
-                            data_item
-                                .try_into_struct::<MultipleSpanInfo>()
-                                .map(SpanInfo::MultipleSpanInfo)
-                                .expect("to be able to convert into MultipleSpanInfo")
-                        }
-                        (Some(FieldValue::Int64(_)), Some(FieldValue::Int64(_)))
-                        | (Some(FieldValue::Uint64(_)), Some(FieldValue::Uint64(_))) => data_item
-                            .try_into_struct::<SingleSpanInfo>()
-                            .map(SpanInfo::SingleSpanInfo)
-                            .expect("to be able to convert into SingleSpanInfo"),
-                        (None, None) => {
-                            return Err(ErrorFromLinterPlugin::MissingSpanStartAndSpanEnd {
-                                query_source: Arc::clone(&query_source),
-                                query_span,
-                            }
-                            .into())
-                        }
-                        (a, b) => {
-                            return Err(ErrorFromLinterPlugin::WrongTypeForSpanStartSpanEnd {
-                                span_start: format!("{a:?}"),
-                                span_end: format!("{b:?}"),
-                                query_source: Arc::clone(&query_source),
-                                query_span,
-                            }
-                            .into())
-                        }
-                    };
+            let transformer: mini_v8::Function = mv8
+                .eval(plugin.post_transform.clone().unwrap_or_else(|| "(data) => data".to_string()))
+                .unwrap();
 
-                ctx.with_rule_name(""); // leave this empty as it's a static string so we can't make it at runtime, and it's not userfacing
+            let data = mv8.create_object();
 
-                match transformed_data_to_span {
-                    SpanInfo::SingleSpanInfo(SingleSpanInfo {
-                        span_start: start,
-                        span_end: end,
-                    }) => {
-                        ctx.diagnostic(ErrorFromLinterPlugin::PluginGenerated(
-                            plugin.summary.clone(),
-                            plugin.reason.clone(),
-                            Span {
-                                start: start
-                                    .try_into()
-                                    .expect("Int64 or Uint64 of span_start to fit in u32"),
-                                end: end
-                                    .try_into()
-                                    .expect("Int64 or Uint64 of span_end to fit in u32"),
-                            },
-                        ));
-                    }
-                    SpanInfo::MultipleSpanInfo(MultipleSpanInfo {
-                        span_start: start,
-                        span_end: end,
-                    }) => {
-                        for i in 0..start.len() {
-                            ctx.diagnostic(ErrorFromLinterPlugin::PluginGenerated(
-                                plugin.summary.clone(),
-                                plugin.reason.clone(),
-                                Span {
-                                    start: start[i]
-                                        .try_into()
-                                        .expect("Int64 or Uint64 of span_start to fit in u32"),
-                                    end: end[i]
-                                        .try_into()
-                                        .expect("Int64 or Uint64 of span_end to fit in u32"),
-                                },
-                            ));
+            for (k, v) in data_item.clone() {
+                fn to_v8(mv8: &mini_v8::MiniV8, fv: FieldValue) -> Value {
+                    match fv {
+                        FieldValue::Null => Value::Null,
+                        FieldValue::Boolean(b) => Value::Boolean(b),
+                        FieldValue::Int64(int) => Value::Number(int as f64),
+                        FieldValue::Uint64(int) => Value::Number(int as f64),
+                        FieldValue::Float64(f64) => Value::Number(f64),
+                        FieldValue::String(str) => Value::String(mv8.create_string(&str)),
+                        FieldValue::List(list) => {
+                            let arr = mv8.create_array();
+                            for el in list.iter() {
+                                arr.push(to_v8(mv8, el.clone())).unwrap();
+                            }
+                            Value::Array(arr)
                         }
+                        _ => unreachable!(),
                     }
                 }
+                data.set(k.to_string(), to_v8(&mv8, v)).unwrap();
+            }
+
+            let transformed: (mini_v8::Object) =
+                transformer.call(Values::from_vec(vec![Value::Object(data)])).unwrap();
+
+            let transformed_data_to_span: SpanInfo = match (
+                transformed.get("span_start").unwrap(),
+                transformed.get("span_end").unwrap(),
+                transformed.get("fix").unwrap(),
+            ) {
+                (Value::Number(a), Value::Number(b), Value::String(fix)) => {
+                    SpanInfo::SingleSpanInfo(SingleSpanInfo {
+                        span_start: a as u64,
+                        span_end: b as u64,
+                        fix: Some(fix.to_string()),
+                    })
+                }
+                (Value::Number(a), Value::Number(b), _) => {
+                    SpanInfo::SingleSpanInfo(SingleSpanInfo {
+                        span_start: a as u64,
+                        span_end: b as u64,
+                        fix: None,
+                    })
+                }
+                (Value::Array(a), Value::Array(b), Value::Array(c)) => {
+                    SpanInfo::MultipleSpanInfo(MultipleSpanInfo {
+                        span_start: a
+                            .elements()
+                            .map(std::result::Result::unwrap)
+                            .collect::<Vec<u64>>(),
+                        span_end: b
+                            .elements()
+                            .map(std::result::Result::unwrap)
+                            .collect::<Vec<u64>>(),
+                        fix: c
+                            .elements()
+                            .map(std::result::Result::unwrap)
+                            .collect::<Vec<Option<String>>>(),
+                    })
+                }
+                (Value::Array(a), Value::Array(b), _) => {
+                    SpanInfo::MultipleSpanInfo(MultipleSpanInfo {
+                        fix: Vec::with_capacity(a.len() as usize),
+                        span_start: a
+                            .elements()
+                            .map(std::result::Result::unwrap)
+                            .collect::<Vec<u64>>(),
+                        span_end: b
+                            .elements()
+                            .map(std::result::Result::unwrap)
+                            .collect::<Vec<u64>>(),
+                    })
+                }
+                _ => unreachable!(),
             };
+
+            ctx.with_rule_name(""); // leave this empty as it's a static string so we can't make it at runtime, and it's not userfacing
+
+            match transformed_data_to_span {
+                SpanInfo::SingleSpanInfo(SingleSpanInfo {
+                    span_start: start,
+                    span_end: end,
+                    fix,
+                }) => {
+                    let start =
+                        start.try_into().expect("Int64 or Uint64 of span_start to fit in u32");
+                    let end = end.try_into().expect("Int64 or Uint64 of span_end to fit in u32");
+
+                    ctx.add_diagnostic(Message::new(
+                        ErrorFromLinterPlugin::PluginGenerated(
+                            plugin.summary.clone(),
+                            plugin.reason.clone(),
+                            Span { start, end },
+                        )
+                        .into(),
+                        fix.map(|x| Fix { content: x.into(), span: Span { start, end } }),
+                    ));
+                }
+                SpanInfo::MultipleSpanInfo(MultipleSpanInfo {
+                    span_start: start,
+                    span_end: end,
+                    mut fix,
+                }) => {
+                    for i in 0..start.len() {
+                        let start = start[i]
+                            .try_into()
+                            .expect("Int64 or Uint64 of span_start to fit in u32");
+                        let end =
+                            end[i].try_into().expect("Int64 or Uint64 of span_end to fit in u32");
+                        ctx.add_diagnostic(Message::new(
+                            ErrorFromLinterPlugin::PluginGenerated(
+                                plugin.summary.clone(),
+                                plugin.reason.clone(),
+                                Span { start, end },
+                            )
+                            .into(),
+                            fix[i]
+                                .take()
+                                .map(|x| Fix { content: x.into(), span: Span { start, end } }),
+                        ));
+                    }
+                }
+            }
         }
         Ok(())
     }

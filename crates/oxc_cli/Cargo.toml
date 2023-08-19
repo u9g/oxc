@@ -32,6 +32,7 @@ oxc_semantic       = { workspace = true }
 oxc_span           = { workspace = true }
 oxc_type_synthesis = { workspace = true }
 oxc_query          = { workspace = true }
+mini-v8            = { path = "/home/u9g/code/8-18-23/mini-v8" }
 
 # TODO temp, for type check output, replace with Miette
 codespan-reporting = "0.11.1"
