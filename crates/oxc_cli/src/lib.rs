@@ -1,7 +1,7 @@
 // mod git;
 mod lint;
 mod lint_plugin_tester;
-mod plugin;
+pub mod plugin;
 mod runner;
 mod type_check;
 mod walk;

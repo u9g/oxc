@@ -39,6 +39,37 @@ fn run_query<T: for<'de> serde::Deserialize<'de> + std::cmp::Ord>(
 }
 
 #[test]
+fn test_operator() {
+    #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, serde::Deserialize)]
+    struct Output {
+        operator: String,
+    }
+    let results = run_query::<Output>(
+        "const apple = 1 || 2 ?? 3 && 4;",
+        r#"
+        query {
+            File {
+                ast_node {
+                    ... on LogicalExpressionAST {
+                        operator @output
+                    }
+                }
+            }
+        }
+        "#,
+    );
+
+    assert_eq!(
+        vec![
+            Output { operator: "&&".to_owned() },
+            Output { operator: "??".to_owned() },
+            Output { operator: "||".to_owned() },
+        ],
+        results
+    );
+}
+
+#[test]
 fn test_path_query() {
     #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, serde::Deserialize)]
     struct Output {

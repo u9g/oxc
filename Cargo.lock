@@ -1564,7 +1564,7 @@ dependencies = [
 
 [[package]]
 name = "oxc_cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "clap",
  "codespan-reporting",
@@ -1887,9 +1887,11 @@ dependencies = [
  "ignore",
  "miette",
  "oxc_allocator",
+ "oxc_cli",
  "oxc_diagnostics",
  "oxc_linter",
  "oxc_parser",
+ "oxc_query",
  "oxc_semantic",
  "oxc_span",
  "rayon",

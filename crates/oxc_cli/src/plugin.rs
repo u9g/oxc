@@ -34,7 +34,7 @@ struct MultipleSpanInfo {
     span_end: Box<[u64]>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct InputQuery {
     pub name: String,
     pub query: String,
@@ -47,18 +47,19 @@ pub struct InputQuery {
     pub tests: QueryTests,
 }
 
-#[derive(Deserialize, Default, Clone)]
+#[derive(Deserialize, Default, Clone, Debug)]
 pub struct QueryTests {
     pub pass: Vec<SingleTest>,
     pub fail: Vec<SingleTest>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct SingleTest {
     pub relative_path: Vec<String>,
     pub code: String,
 }
 
+#[derive(Debug)]
 pub struct LinterPlugin {
     pub(super) rules: Vec<InputQuery>,
     schema: &'static Schema,
