@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fs, path::PathBuf, rc::Rc, sync::Arc};
+use std::{collections::BTreeMap, fmt::Debug, fs, path::PathBuf, rc::Rc, sync::Arc};
 
 use ignore::Walk;
 use located_yaml::{YamlElt, YamlLoader};
@@ -16,7 +16,7 @@ use oxc_query::{schema, Adapter};
 use oxc_semantic::{SemanticBuilder, SemanticBuilderReturn};
 use oxc_span::{SourceType, Span};
 use serde::Deserialize;
-use trustfall::{execute_query, FieldValue, Schema, TransparentValue, TryIntoStruct};
+use trustfall::{execute_query, FieldValue, Schema, TransparentValue};
 
 enum SpanInfo {
     SingleSpanInfo(SingleSpanInfo),
@@ -28,6 +28,8 @@ struct SingleSpanInfo {
     span_start: u64,
     span_end: u64,
     fix: Option<String>,
+    summary: Option<String>,
+    reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,6 +37,8 @@ struct MultipleSpanInfo {
     span_start: Vec<u64>,
     span_end: Vec<u64>,
     fix: Vec<Option<String>>,
+    summary: Vec<Option<String>>,
+    reason: Vec<Option<String>>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -149,14 +153,13 @@ impl LinterPlugin {
         ctx: &mut LintContext,
         plugin: &InputQuery,
         adapter: &Adapter<'_>,
+        mv8: &mini_v8::MiniV8,
     ) -> oxc_diagnostics::Result<()> {
         let arc_adapter = Arc::new(adapter);
         let query_source =
             Arc::new(NamedSource::new(plugin.path.to_string_lossy(), plugin.query.clone()));
         // NOTE: the 0 is technically wrong, but it's the right file which is enough
         let query_span = SourceSpan::new(0.into(), plugin.query.len().into());
-
-        let mv8 = mini_v8::MiniV8::new();
 
         for data_item in
             execute_query(self.schema, Arc::clone(&arc_adapter), &plugin.query, plugin.args.clone())
@@ -168,7 +171,7 @@ impl LinterPlugin {
         {
             let transformer: mini_v8::Function = mv8
                 .eval(plugin.post_transform.clone().unwrap_or_else(|| "(data) => data".to_string()))
-                .unwrap();
+                .unwrap_or_else(|err| panic!("{err}"));
 
             let data = mv8.create_object();
 
@@ -191,32 +194,40 @@ impl LinterPlugin {
                         _ => unreachable!(),
                     }
                 }
-                data.set(k.to_string(), to_v8(&mv8, v)).unwrap();
+                data.set(k.to_string(), to_v8(mv8, v)).unwrap();
             }
 
-            let transformed: (mini_v8::Object) =
+            let fn_return: Value =
                 transformer.call(Values::from_vec(vec![Value::Object(data)])).unwrap();
 
+            let object_returned = match fn_return {
+                Value::Null => continue,
+                Value::Object(object) => object,
+                _ => todo!(),
+            };
+
             let transformed_data_to_span: SpanInfo = match (
-                transformed.get("span_start").unwrap(),
-                transformed.get("span_end").unwrap(),
-                transformed.get("fix").unwrap(),
+                object_returned.get("span_start").unwrap(),
+                object_returned.get("span_end").unwrap(),
             ) {
-                (Value::Number(a), Value::Number(b), Value::String(fix)) => {
-                    SpanInfo::SingleSpanInfo(SingleSpanInfo {
-                        span_start: a as u64,
-                        span_end: b as u64,
-                        fix: Some(fix.to_string()),
-                    })
-                }
-                (Value::Number(a), Value::Number(b), _) => {
-                    SpanInfo::SingleSpanInfo(SingleSpanInfo {
-                        span_start: a as u64,
-                        span_end: b as u64,
-                        fix: None,
-                    })
-                }
-                (Value::Array(a), Value::Array(b), Value::Array(c)) => {
+                (Value::Number(a), Value::Number(b)) => SpanInfo::SingleSpanInfo(SingleSpanInfo {
+                    span_start: a as u64,
+                    span_end: b as u64,
+                    fix: match object_returned.get("fix").unwrap() {
+                        Value::String(fix) => Some(fix.to_string()),
+                        _ => None,
+                    },
+                    summary: match object_returned.get("summary").unwrap() {
+                        Value::String(summary) => Some(summary.to_string()),
+                        _ => None,
+                    },
+                    reason: match object_returned.get("reason").unwrap() {
+                        Value::String(reason) => Some(reason.to_string()),
+                        _ => None,
+                    },
+                }),
+                (Value::Array(a), Value::Array(b)) => {
+                    let a_count = a.len();
                     SpanInfo::MultipleSpanInfo(MultipleSpanInfo {
                         span_start: a
                             .elements()
@@ -226,26 +237,44 @@ impl LinterPlugin {
                             .elements()
                             .map(std::result::Result::unwrap)
                             .collect::<Vec<u64>>(),
-                        fix: c
-                            .elements()
-                            .map(std::result::Result::unwrap)
-                            .collect::<Vec<Option<String>>>(),
+                        fix: match object_returned.get("fix").unwrap() {
+                            Value::Array(fix_array) => (0..a_count)
+                                .map(|i| match fix_array.get(i).unwrap() {
+                                    Value::String(fix) => Some(fix.to_string()),
+                                    _ => None,
+                                })
+                                .collect(),
+                            _ => Vec::with_capacity(a_count as usize),
+                        },
+                        summary: match object_returned.get("summary").unwrap() {
+                            Value::Array(summary_array) => (0..a_count)
+                                .map(|i| match summary_array.get(i).unwrap() {
+                                    Value::String(summary) => Some(summary.to_string()),
+                                    _ => None,
+                                })
+                                .collect(),
+                            _ => Vec::with_capacity(a_count as usize),
+                        },
+                        reason: match object_returned.get("reason").unwrap() {
+                            Value::Array(reason_array) => (0..a_count)
+                                .map(|i| match reason_array.get(i).unwrap() {
+                                    Value::String(reason) => Some(reason.to_string()),
+                                    _ => None,
+                                })
+                                .collect(),
+                            _ => Vec::with_capacity(a_count as usize),
+                        },
                     })
                 }
-                (Value::Array(a), Value::Array(b), _) => {
-                    SpanInfo::MultipleSpanInfo(MultipleSpanInfo {
-                        fix: Vec::with_capacity(a.len() as usize),
-                        span_start: a
-                            .elements()
-                            .map(std::result::Result::unwrap)
-                            .collect::<Vec<u64>>(),
-                        span_end: b
-                            .elements()
-                            .map(std::result::Result::unwrap)
-                            .collect::<Vec<u64>>(),
-                    })
+                (a, b) => {
+                    return Err(ErrorFromLinterPlugin::WrongTypeForSpanStartSpanEnd {
+                        span_start: format!("{a:?}"),
+                        span_end: format!("{b:?}"),
+                        query_source: Arc::clone(&query_source),
+                        query_span,
+                    }
+                    .into())
                 }
-                _ => unreachable!(),
             };
 
             ctx.with_rule_name(""); // leave this empty as it's a static string so we can't make it at runtime, and it's not userfacing
@@ -255,6 +284,8 @@ impl LinterPlugin {
                     span_start: start,
                     span_end: end,
                     fix,
+                    summary,
+                    reason,
                 }) => {
                     let start =
                         start.try_into().expect("Int64 or Uint64 of span_start to fit in u32");
@@ -262,8 +293,8 @@ impl LinterPlugin {
 
                     ctx.add_diagnostic(Message::new(
                         ErrorFromLinterPlugin::PluginGenerated(
-                            plugin.summary.clone(),
-                            plugin.reason.clone(),
+                            summary.unwrap_or_else(|| plugin.summary.clone()),
+                            reason.unwrap_or_else(|| plugin.reason.clone()),
                             Span { start, end },
                         )
                         .into(),
@@ -274,6 +305,8 @@ impl LinterPlugin {
                     span_start: start,
                     span_end: end,
                     mut fix,
+                    summary,
+                    reason,
                 }) => {
                     for i in 0..start.len() {
                         let start = start[i]
@@ -283,8 +316,8 @@ impl LinterPlugin {
                             end[i].try_into().expect("Int64 or Uint64 of span_end to fit in u32");
                         ctx.add_diagnostic(Message::new(
                             ErrorFromLinterPlugin::PluginGenerated(
-                                plugin.summary.clone(),
-                                plugin.reason.clone(),
+                                summary[i].clone().unwrap_or_else(|| plugin.summary.clone()),
+                                reason[i].clone().unwrap_or_else(|| plugin.reason.clone()),
                                 Span { start, end },
                             )
                             .into(),
@@ -304,26 +337,32 @@ impl LinterPlugin {
         ctx: &mut LintContext,
         relative_file_path_parts: Vec<Option<String>>,
         rules_to_run: RulesToRun,
+        mini_v8: &mini_v8::MiniV8,
     ) -> oxc_diagnostics::Result<()> {
         let inner = Adapter::new(Rc::clone(ctx.semantic()), relative_file_path_parts);
         let adapter = Arc::from(&inner);
         if let RulesToRun::Only(this_rule) = rules_to_run {
             for rule in self.rules.iter().filter(|x| x.name == this_rule) {
-                self.run_plugin_rules(ctx, rule, &adapter)?;
+                self.run_plugin_rules(ctx, rule, &adapter, &mini_v8)?;
             }
         } else {
             for rule in &self.rules {
-                self.run_plugin_rules(ctx, rule, &adapter)?;
+                self.run_plugin_rules(ctx, rule, &adapter, &mini_v8)?;
             }
         }
         Ok(())
     }
 }
 
+pub fn mini_v8() -> mini_v8::MiniV8 {
+    mini_v8::MiniV8::new()
+}
+
 fn run_test(
     test: &SingleTest,
     rule_name: &str,
     plugin: &LinterPlugin,
+    mini_v8: &mini_v8::MiniV8,
 ) -> std::result::Result<Vec<Report>, Vec<Report>> {
     let file_path = &test.relative_path.last().expect("there to be atleast 1 path part");
     let source_text = &test.code;
@@ -354,6 +393,7 @@ fn run_test(
         &mut lint_ctx,
         test.relative_path.iter().map(|el| Some(el.clone())).collect::<Vec<_>>(),
         RulesToRun::Only(rule_name.to_string()),
+        mini_v8,
     );
 
     if let Some(err) = result.err() {
@@ -394,7 +434,17 @@ struct UnexpectedErrorsInFailTest {
     err_span: SourceSpan,
 }
 
-fn span_of_test_n(yaml_text: &str, test_ix: usize, test_code: &str) -> SourceSpan {
+enum PassOrFail {
+    Pass,
+    Fail,
+}
+
+fn span_of_test_n(
+    yaml_text: &str,
+    test_ix: usize,
+    test_code: &str,
+    pass_or_fail: PassOrFail,
+) -> SourceSpan {
     let yaml = YamlLoader::load_from_str(
         // TODO: Should we just save the string after we read it originally?
         yaml_text,
@@ -413,11 +463,11 @@ fn span_of_test_n(yaml_text: &str, test_ix: usize, test_code: &str) -> SourceSpa
         .keys()
         .find(|x| {
             let YamlElt::String(str) = &x.yaml else {return false};
-            str == "pass"
+            str == if matches!(pass_or_fail, PassOrFail::Pass) { "pass" } else { "fail" }
         })
         .expect("to be able to find pass hash in yaml file");
-    let YamlElt::Array(passing_test_arr) = &tests_hash[pass_hash_key].yaml else {unreachable!("there must be a pass array in the yaml")};
-    let test_hash_span = &passing_test_arr[test_ix].lines_range();
+    let YamlElt::Array(test_arr) = &tests_hash[pass_hash_key].yaml else {unreachable!("there must be a pass array in the yaml")};
+    let test_hash_span = &test_arr[test_ix].lines_range();
     let start = yaml_text
         .char_indices()
         .filter(|a| a.1 == '\n')
@@ -443,10 +493,11 @@ fn span_of_test_n(yaml_text: &str, test_ix: usize, test_code: &str) -> SourceSpa
 
 pub fn test_queries(queries_to_test: &PathBuf) -> oxc_diagnostics::Result<()> {
     let plugin = LinterPlugin::new(schema(), queries_to_test)?;
+    let mini_v8 = mini_v8::MiniV8::new();
 
     for rule in &plugin.rules {
         for (ix, test) in rule.tests.pass.iter().enumerate() {
-            let diagnostics_collected = run_test(test, &rule.name, &plugin);
+            let diagnostics_collected = run_test(test, &rule.name, &plugin, &mini_v8);
             let source = Arc::new(NamedSource::new(
                 format!("./{}", test.relative_path.join("/")),
                 test.code.clone(),
@@ -469,7 +520,7 @@ pub fn test_queries(queries_to_test: &PathBuf) -> oxc_diagnostics::Result<()> {
                                 }
                             })
                             .collect(),
-                        err_span: span_of_test_n(&yaml_text, ix, &test.code),
+                        err_span: span_of_test_n(&yaml_text, ix, &test.code, PassOrFail::Pass),
                         query: NamedSource::new(rule.path.to_string_lossy(), yaml_text),
                     }
                     .into());
@@ -479,7 +530,7 @@ pub fn test_queries(queries_to_test: &PathBuf) -> oxc_diagnostics::Result<()> {
         }
 
         for (i, test) in rule.tests.fail.iter().enumerate() {
-            let diagnostics_collected = run_test(test, &rule.name, &plugin);
+            let diagnostics_collected = run_test(test, &rule.name, &plugin, &mini_v8);
             let source = Arc::new(NamedSource::new(
                 format!("./{}", test.relative_path.join("/")),
                 test.code.clone(),
@@ -495,7 +546,7 @@ pub fn test_queries(queries_to_test: &PathBuf) -> oxc_diagnostics::Result<()> {
                         fs::read_to_string(&rule.path).expect("to be able to get text of rule");
 
                     return Err(ExpectedTestToFailButPassed {
-                        err_span: span_of_test_n(&yaml_text, i, &test.code),
+                        err_span: span_of_test_n(&yaml_text, i, &test.code, PassOrFail::Fail),
                         query: NamedSource::new(rule.path.to_string_lossy(), yaml_text),
                     }
                     .into());
@@ -516,7 +567,7 @@ pub fn test_queries(queries_to_test: &PathBuf) -> oxc_diagnostics::Result<()> {
                                 }
                             })
                             .collect(),
-                        err_span: span_of_test_n(&yaml_text, i, &test.code),
+                        err_span: span_of_test_n(&yaml_text, i, &test.code, PassOrFail::Fail),
                         query: NamedSource::new(rule.path.to_string_lossy(), yaml_text),
                     }
                     .into());

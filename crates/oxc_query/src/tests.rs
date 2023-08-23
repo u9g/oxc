@@ -39,34 +39,45 @@ fn run_query<T: for<'de> serde::Deserialize<'de> + std::cmp::Ord>(
 }
 
 #[test]
-fn test_operator() {
+fn test_expr_stmt() {
     #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, serde::Deserialize)]
     struct Output {
-        operator: String,
+        __typename: String,
     }
-    let results = run_query::<Output>(
-        "const apple = 1 || 2 ?? 3 && 4;",
+
+    let not_ast = run_query::<Output>(
+        "function a() { y = 2; }",
         r#"
         query {
             File {
                 ast_node {
-                    ... on LogicalExpressionAST {
-                        operator @output
+                    ... on FunctionBodyAST {
+                        statement {
+                            __typename @output
+                        }
                     }
                 }
             }
         }
         "#,
     );
+    assert_eq!(vec![Output { __typename: "ExpressionStatement".to_owned() },], not_ast);
 
-    assert_eq!(
-        vec![
-            Output { operator: "&&".to_owned() },
-            Output { operator: "??".to_owned() },
-            Output { operator: "||".to_owned() },
-        ],
-        results
+    let ast = run_query::<Output>(
+        "function a() { y = 2; }",
+        r#"
+        query {
+            File {
+                ast_node {
+                    ... on ExpressionStatementAST {
+                        __typename @output
+                    }
+                }
+            }
+        }
+        "#,
     );
+    assert_eq!(vec![Output { __typename: "ExpressionStatementAST".to_owned() },], ast);
 }
 
 #[test]

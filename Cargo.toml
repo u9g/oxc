@@ -108,25 +108,13 @@ inherits = "release"
 strip    = false
 debug    = true
 
-[profile.dev.package.async-graphql-parser]
+[profile.dev.package.'*']
 opt-level        = 3
 debug-assertions = true
 overflow-checks  = true
 codegen-units    = 16
 
-[profile.test.package.async-graphql-parser]
-opt-level        = 3
-debug-assertions = true
-overflow-checks  = true
-codegen-units    = 16
-
-[profile.dev.package.trustfall_core]
-opt-level        = 3
-debug-assertions = true
-overflow-checks  = true
-codegen-units    = 16
-
-[profile.test.package.trustfall_core]
+[profile.test.package.'*']
 opt-level        = 3
 debug-assertions = true
 overflow-checks  = true

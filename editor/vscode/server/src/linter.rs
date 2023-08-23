@@ -12,7 +12,7 @@ use crate::options::LintOptions;
 use crate::walk::Walk;
 use miette::NamedSource;
 use oxc_allocator::Allocator;
-use oxc_cli::plugin::LinterPlugin;
+use oxc_cli::plugin::{mini_v8, LinterPlugin};
 use oxc_diagnostics::{
     miette::{self},
     Error, Severity,
@@ -272,6 +272,7 @@ impl IsolatedLintHandler {
                     &mut lint_ctx,
                     vec![Some("index.ts".to_owned())],
                     oxc_cli::plugin::RulesToRun::All,
+                    &mini_v8(),
                 ) {
                     return Some(Self::wrap_diagnostics(
                         path,

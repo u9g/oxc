@@ -58,6 +58,17 @@ pub enum Vertex<'a> {
     Parameter(Rc<ParameterVertex<'a>>),
     LogicalExpression(Rc<LogicalExpressionVertex<'a>>),
     UnaryExpression(Rc<UnaryExpressionVertex<'a>>),
+    ExpressionStatement(Rc<ExpressionStatementVertex<'a>>),
+    WhileStatement(Rc<WhileStatementVertex<'a>>),
+    BlockStatement(Rc<BlockStatementVertex<'a>>),
+    VarRef(Rc<VarRefVertex<'a>>),
+    DoWhileStatement(Rc<DoWhileStatementVertex<'a>>),
+    ForStatement(Rc<ForStatementVertex<'a>>),
+    TernaryExpression(Rc<TernaryExpressionVertex<'a>>),
+    New(Rc<NewVertex<'a>>),
+    Throw(Rc<ThrowVertex<'a>>),
+    Array(Rc<ArrayVertex<'a>>),
+    ArrayElement(Rc<ArrayElementVertex<'a>>),
 }
 
 impl<'a> Vertex<'a> {
@@ -106,6 +117,17 @@ impl<'a> Vertex<'a> {
             Self::Parameter(data) => data.parameter.span,
             Self::LogicalExpression(data) => data.logical_expression.span,
             Self::UnaryExpression(data) => data.unary_expression.span,
+            Self::ExpressionStatement(data) => data.expression_statement.span,
+            Self::WhileStatement(data) => data.while_statement.span,
+            Self::DoWhileStatement(data) => data.do_while_statement.span,
+            Self::BlockStatement(data) => data.block_statement.span,
+            Self::VarRef(data) => data.identifier_reference.span,
+            Self::ForStatement(data) => data.for_statement.span,
+            Self::TernaryExpression(data) => data.conditional_expression.span,
+            Self::New(data) => data.new_expression.span,
+            Self::Throw(data) => data.throw_statement.span,
+            Self::Array(data) => data.array_expression.span,
+            Self::ArrayElement(data) => data.array_expression_element.span(),
             Self::File
             | Self::Url(_)
             | Self::PathPart(_)
@@ -143,6 +165,17 @@ impl<'a> Vertex<'a> {
             Vertex::Argument(data) => data.ast_node.map(|x| x.id()),
             Vertex::LogicalExpression(data) => data.ast_node.map(|x| x.id()),
             Vertex::UnaryExpression(data) => data.ast_node.map(|x| x.id()),
+            Vertex::ExpressionStatement(data) => data.ast_node.map(|x| x.id()),
+            Vertex::WhileStatement(data) => data.ast_node.map(|x| x.id()),
+            Vertex::BlockStatement(data) => data.ast_node.map(|x| x.id()),
+            Vertex::VarRef(data) => data.ast_node.map(|x| x.id()),
+            Vertex::DoWhileStatement(data) => data.ast_node.map(|x| x.id()),
+            Vertex::ForStatement(data) => data.ast_node.map(|x| x.id()),
+            Vertex::TernaryExpression(data) => data.ast_node.map(|x| x.id()),
+            Vertex::New(data) => data.ast_node.map(|x| x.id()),
+            Vertex::Throw(data) => data.ast_node.map(|x| x.id()),
+            Vertex::Array(data) => data.ast_node.map(|x| x.id()),
+            Vertex::ArrayElement(data) => data.ast_node.map(|x| x.id()),
             Vertex::DefaultImport(_)
             | Vertex::Statement(_)
             | Vertex::AssignmentType(_)
@@ -193,11 +226,8 @@ impl<'a> Vertex<'a> {
         }
     }
 
-    // todo: remove `Option` when this doesn't return none
-    pub fn try_from_identifier_reference(
-        _identifier_reference: &'a IdentifierReference,
-    ) -> Option<Self> {
-        None
+    pub fn try_from_identifier_reference(identifier_reference: &'a IdentifierReference) -> Self {
+        Vertex::VarRef(VarRefVertex { ast_node: None, identifier_reference }.into())
     }
 
     pub fn function_is_async(&self) -> bool {
@@ -285,10 +315,22 @@ impl Typename for Vertex<'_> {
             Vertex::LogicalExpression(logical_expr) => logical_expr.typename(),
             Vertex::UnaryExpression(unary_expr) => unary_expr.typename(),
             Vertex::Statement(_) => "Statement",
+            Vertex::ExpressionStatement(expr_stmt) => expr_stmt.typename(),
+            Vertex::WhileStatement(expr_stmt) => expr_stmt.typename(),
+            Vertex::DoWhileStatement(expr_stmt) => expr_stmt.typename(),
+            Vertex::BlockStatement(blk_stmt) => blk_stmt.typename(),
+            Vertex::VarRef(var_ref) => var_ref.typename(),
+            Vertex::ForStatement(for_stmt) => for_stmt.typename(),
+            Vertex::TernaryExpression(ternary_expr) => ternary_expr.typename(),
+            Vertex::New(new) => new.typename(),
+            Vertex::Throw(throw) => throw.typename(),
+            Vertex::Array(array) => array.typename(),
+            Vertex::ArrayElement(array_el) => array_el.typename(),
         }
     }
 }
 
+#[allow(clippy::too_many_lines)]
 impl<'a> From<AstNode<'a>> for Vertex<'a> {
     fn from(ast_node: AstNode<'a>) -> Self {
         match ast_node.kind() {
@@ -376,6 +418,40 @@ impl<'a> From<AstNode<'a>> for Vertex<'a> {
             AstKind::UnaryExpression(unary_expression) => Vertex::UnaryExpression(
                 UnaryExpressionVertex { ast_node: Some(ast_node), unary_expression }.into(),
             ),
+            AstKind::ExpressionStatement(expression_statement) => Vertex::ExpressionStatement(
+                ExpressionStatementVertex { ast_node: Some(ast_node), expression_statement }.into(),
+            ),
+            AstKind::WhileStatement(expression_statement) => Vertex::WhileStatement(
+                WhileStatementVertex {
+                    ast_node: Some(ast_node),
+                    while_statement: expression_statement,
+                }
+                .into(),
+            ),
+            AstKind::BlockStatement(block_statement) => Vertex::BlockStatement(
+                BlockStatementVertex { ast_node: Some(ast_node), block_statement }.into(),
+            ),
+            AstKind::IdentifierReference(identifier_reference) => Vertex::VarRef(
+                VarRefVertex { ast_node: Some(ast_node), identifier_reference }.into(),
+            ),
+            AstKind::DoWhileStatement(do_while_statement) => Vertex::DoWhileStatement(
+                DoWhileStatementVertex { ast_node: Some(ast_node), do_while_statement }.into(),
+            ),
+            AstKind::ForStatement(for_statement) => Vertex::ForStatement(
+                ForStatementVertex { ast_node: Some(ast_node), for_statement }.into(),
+            ),
+            AstKind::ConditionalExpression(conditional_expression) => Vertex::TernaryExpression(
+                TernaryExpressionVertex { ast_node: Some(ast_node), conditional_expression }.into(),
+            ),
+            AstKind::NewExpression(new_expression) => {
+                Vertex::New(NewVertex { ast_node: Some(ast_node), new_expression }.into())
+            }
+            AstKind::ThrowStatement(throw_statement) => {
+                Vertex::Throw(ThrowVertex { ast_node: Some(ast_node), throw_statement }.into())
+            }
+            AstKind::ArrayExpressionElement(array_expression_element) => Vertex::ArrayElement(
+                ArrayElementVertex { ast_node: Some(ast_node), array_expression_element }.into(),
+            ),
             _ => Vertex::ASTNode(ast_node),
         }
     }
@@ -386,6 +462,24 @@ impl<'a> From<&'a Statement<'a>> for Vertex<'a> {
         match &stmt {
             Statement::ReturnStatement(return_statement) => {
                 Vertex::Return(ReturnVertex { ast_node: None, return_statement }.into())
+            }
+            Statement::ExpressionStatement(expression_statement) => Vertex::ExpressionStatement(
+                ExpressionStatementVertex { ast_node: None, expression_statement }.into(),
+            ),
+            Statement::WhileStatement(while_statement) => Vertex::WhileStatement(
+                WhileStatementVertex { ast_node: None, while_statement }.into(),
+            ),
+            Statement::DoWhileStatement(do_while_statement) => Vertex::DoWhileStatement(
+                DoWhileStatementVertex { ast_node: None, do_while_statement }.into(),
+            ),
+            Statement::BlockStatement(block_statement) => Vertex::BlockStatement(
+                BlockStatementVertex { ast_node: None, block_statement }.into(),
+            ),
+            Statement::ForStatement(for_statement) => {
+                Vertex::ForStatement(ForStatementVertex { ast_node: None, for_statement }.into())
+            }
+            Statement::ThrowStatement(throw_statement) => {
+                Vertex::Throw(ThrowVertex { ast_node: None, throw_statement }.into())
             }
             _ => Vertex::Statement(stmt),
         }
@@ -430,6 +524,18 @@ impl<'a> From<&'a Expression<'a>> for Vertex<'a> {
             Expression::UnaryExpression(unary_expression) => Vertex::UnaryExpression(
                 UnaryExpressionVertex { ast_node: None, unary_expression }.into(),
             ),
+            Expression::Identifier(identifier_reference) => {
+                Vertex::VarRef(VarRefVertex { ast_node: None, identifier_reference }.into())
+            }
+            Expression::ConditionalExpression(conditional_expression) => Vertex::TernaryExpression(
+                TernaryExpressionVertex { ast_node: None, conditional_expression }.into(),
+            ),
+            Expression::NewExpression(new_expression) => {
+                Vertex::New(NewVertex { ast_node: None, new_expression }.into())
+            }
+            Expression::ArrayExpression(array_expression) => {
+                Vertex::Array(ArrayVertex { ast_node: None, array_expression }.into())
+            }
             _ => Vertex::Expression(expr),
         }
     }
@@ -871,6 +977,193 @@ impl<'a> Typename for UnaryExpressionVertex<'a> {
             "UnaryExpressionAST"
         } else {
             "UnaryExpression"
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct ExpressionStatementVertex<'a> {
+    pub ast_node: Option<AstNode<'a>>,
+    pub expression_statement: &'a ExpressionStatement<'a>,
+}
+
+impl<'a> Typename for ExpressionStatementVertex<'a> {
+    fn typename(&self) -> &'static str {
+        if self.ast_node.is_some() {
+            "ExpressionStatementAST"
+        } else {
+            "ExpressionStatement"
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct WhileStatementVertex<'a> {
+    pub ast_node: Option<AstNode<'a>>,
+    pub while_statement: &'a WhileStatement<'a>,
+}
+
+impl<'a> Typename for WhileStatementVertex<'a> {
+    fn typename(&self) -> &'static str {
+        if self.ast_node.is_some() {
+            "WhileStatementAST"
+        } else {
+            "WhileStatement"
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct BlockStatementVertex<'a> {
+    pub ast_node: Option<AstNode<'a>>,
+    pub block_statement: &'a BlockStatement<'a>,
+}
+
+impl<'a> Typename for BlockStatementVertex<'a> {
+    fn typename(&self) -> &'static str {
+        if self.ast_node.is_some() {
+            "BlockStatementAST"
+        } else {
+            "BlockStatement"
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct VarRefVertex<'a> {
+    pub ast_node: Option<AstNode<'a>>,
+    pub identifier_reference: &'a IdentifierReference,
+}
+
+impl<'a> Typename for VarRefVertex<'a> {
+    fn typename(&self) -> &'static str {
+        if self.ast_node.is_some() {
+            "VarRefAST"
+        } else {
+            "VarRef"
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct DoWhileStatementVertex<'a> {
+    pub ast_node: Option<AstNode<'a>>,
+    pub do_while_statement: &'a DoWhileStatement<'a>,
+}
+
+impl<'a> Typename for DoWhileStatementVertex<'a> {
+    fn typename(&self) -> &'static str {
+        if self.ast_node.is_some() {
+            "DoWhileStatementAST"
+        } else {
+            "DoWhileStatement"
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct ForStatementVertex<'a> {
+    pub ast_node: Option<AstNode<'a>>,
+    pub for_statement: &'a ForStatement<'a>,
+}
+
+impl<'a> Typename for ForStatementVertex<'a> {
+    fn typename(&self) -> &'static str {
+        if self.ast_node.is_some() {
+            "ForStatementAST"
+        } else {
+            "ForStatement"
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct TernaryExpressionVertex<'a> {
+    pub ast_node: Option<AstNode<'a>>,
+    pub conditional_expression: &'a ConditionalExpression<'a>,
+}
+
+impl<'a> Typename for TernaryExpressionVertex<'a> {
+    fn typename(&self) -> &'static str {
+        if self.ast_node.is_some() {
+            "TernaryExpressionAST"
+        } else {
+            "TernaryExpression"
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct NewVertex<'a> {
+    pub ast_node: Option<AstNode<'a>>,
+    pub new_expression: &'a NewExpression<'a>,
+}
+
+impl<'a> Typename for NewVertex<'a> {
+    fn typename(&self) -> &'static str {
+        if self.ast_node.is_some() {
+            "NewAST"
+        } else {
+            "New"
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct ThrowVertex<'a> {
+    pub ast_node: Option<AstNode<'a>>,
+    pub throw_statement: &'a ThrowStatement<'a>,
+}
+
+impl<'a> Typename for ThrowVertex<'a> {
+    fn typename(&self) -> &'static str {
+        if self.ast_node.is_some() {
+            "ThrowAST"
+        } else {
+            "Throw"
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct ArrayVertex<'a> {
+    pub ast_node: Option<AstNode<'a>>,
+    pub array_expression: &'a ArrayExpression<'a>,
+}
+
+impl<'a> Typename for ArrayVertex<'a> {
+    fn typename(&self) -> &'static str {
+        if self.ast_node.is_some() {
+            "ArrayAST"
+        } else {
+            "Array"
+        }
+    }
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct ArrayElementVertex<'a> {
+    pub ast_node: Option<AstNode<'a>>,
+    pub array_expression_element: &'a ArrayExpressionElement<'a>,
+}
+
+impl<'a> Typename for ArrayElementVertex<'a> {
+    fn typename(&self) -> &'static str {
+        if self.ast_node.is_some() {
+            "ArrayElementAST"
+        } else {
+            "ArrayElement"
         }
     }
 }

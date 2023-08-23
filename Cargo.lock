@@ -1805,7 +1805,6 @@ dependencies = [
  "oxc_semantic",
  "oxc_span",
  "serde",
- "serde_json",
  "trustfall",
  "url",
 ]
