@@ -65,7 +65,7 @@ impl<'a> LintContext<'a> {
         self.diagnostics.into_inner()
     }
 
-    fn add_diagnostic(&self, message: Message<'a>) {
+    pub fn add_diagnostic(&self, message: Message<'a>) {
         if !self.disable_directives.contains(self.current_rule_name, message.start()) {
             self.diagnostics.borrow_mut().push(message);
         }
