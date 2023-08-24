@@ -1,5 +1,6 @@
 mod command;
 mod lint;
+pub mod plugin;
 mod result;
 mod runner;
 mod type_check;

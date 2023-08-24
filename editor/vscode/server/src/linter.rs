@@ -4,7 +4,7 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, RwLock,
     },
 };
 
@@ -12,9 +12,14 @@ use crate::options::LintOptions;
 use crate::walk::Walk;
 use miette::NamedSource;
 use oxc_allocator::Allocator;
-use oxc_diagnostics::{miette, Error, Severity};
-use oxc_linter::{LintContext, Linter};
+use oxc_cli::plugin::{mini_v8, LinterPlugin};
+use oxc_diagnostics::{
+    miette::{self},
+    Error, Severity,
+};
+use oxc_linter::{LintContext, Linter, RuleCategory, RULES};
 use oxc_parser::Parser;
+use oxc_query::schema;
 use oxc_semantic::SemanticBuilder;
 use oxc_span::{SourceType, VALID_EXTENSIONS};
 use ropey::Rope;
@@ -133,11 +138,16 @@ pub struct FixedContent {
 pub struct IsolatedLintHandler {
     options: Arc<LintOptions>,
     linter: Arc<Linter>,
+    plugin: Arc<RwLock<Option<LinterPlugin>>>,
 }
 
 impl IsolatedLintHandler {
-    pub fn new(options: Arc<LintOptions>, linter: Arc<Linter>) -> Self {
-        Self { options, linter }
+    pub fn new(
+        options: Arc<LintOptions>,
+        linter: Arc<Linter>,
+        plugin: Arc<RwLock<Option<LinterPlugin>>>,
+    ) -> Self {
+        Self { options, linter, plugin }
     }
 
     /// # Panics
@@ -153,7 +163,7 @@ impl IsolatedLintHandler {
 
     pub fn run_single(&self, path: &Path) -> Option<Vec<DiagnosticReport>> {
         if Self::is_wanted_ext(path) {
-            Some(Self::lint_path(&self.linter, path).map_or(vec![], |(p, errors)| {
+            Some(Self::lint_path(&self.linter, path, &self.plugin).map_or(vec![], |(p, errors)| {
                 errors.into_iter().map(|e| e.into_diagnostic_report(&p)).collect()
             }))
         } else {
@@ -185,12 +195,14 @@ impl IsolatedLintHandler {
         });
 
         let linter = Arc::clone(&self.linter);
+        let plugin = Arc::clone(&self.plugin);
         rayon::spawn(move || {
             while let Ok(path) = rx_path.recv() {
                 let tx_error = tx_error.clone();
                 let linter = Arc::clone(&linter);
+                let plugin = Arc::clone(&plugin);
                 rayon::spawn(move || {
-                    if let Some(diagnostics) = Self::lint_path(&linter, &path) {
+                    if let Some(diagnostics) = Self::lint_path(&linter, &path, &plugin) {
                         tx_error.send(diagnostics).unwrap();
                     }
                     drop(tx_error);
@@ -213,7 +225,11 @@ impl IsolatedLintHandler {
             .collect()
     }
 
-    fn lint_path(linter: &Linter, path: &Path) -> Option<(PathBuf, Vec<ErrorWithPosition>)> {
+    fn lint_path(
+        linter: &Linter,
+        path: &Path,
+        plugin: &RwLock<Option<LinterPlugin>>,
+    ) -> Option<(PathBuf, Vec<ErrorWithPosition>)> {
         let source_text =
             fs::read_to_string(path).unwrap_or_else(|_| panic!("Failed to read {path:?}"));
         let allocator = Allocator::default();
@@ -248,14 +264,31 @@ impl IsolatedLintHandler {
             return Some(Self::wrap_diagnostics(path, &source_text, reports));
         };
 
-        let lint_ctx = LintContext::new(&Rc::new(semantic_ret.semantic));
+        let mut lint_ctx = LintContext::new(&Rc::new(semantic_ret.semantic));
+        {
+            let plugin = plugin.read().unwrap();
+            if let Some(plugin) = &*plugin {
+                if let Err(err) = plugin.run_tests(
+                    &mut lint_ctx,
+                    vec![Some("index.ts".to_owned())],
+                    oxc_cli::plugin::RulesToRun::All,
+                    &mini_v8(),
+                ) {
+                    return Some(Self::wrap_diagnostics(
+                        path,
+                        &source_text,
+                        vec![ErrorReport { error: err, fixed_content: None }],
+                    ));
+                }
+            }
+        }
         let result = linter.run(lint_ctx);
 
         if result.is_empty() {
             return None;
         }
 
-        if linter.options().fix {
+        if linter.has_fix() {
             let reports = result
                 .into_iter()
                 .map(|msg| {
@@ -315,12 +348,22 @@ fn offset_to_position(offset: usize, source_text: &str) -> Option<Position> {
 #[derive(Debug)]
 pub struct ServerLinter {
     linter: Arc<Linter>,
+    plugin: Arc<RwLock<Option<LinterPlugin>>>,
 }
 
 impl ServerLinter {
     pub fn new() -> Self {
-        let linter = Linter::new().with_fix(true);
-        Self { linter: Arc::new(linter) }
+        let linter = Linter::from_rules(vec![]).with_fix(true);
+
+        Self { linter: Arc::new(linter), plugin: Arc::new(RwLock::new(None)) }
+    }
+
+    pub fn make_plugin(&self, root_uri: &Url) {
+        let mut plugin = self.plugin.write().unwrap();
+        let mut path = root_uri.to_file_path().unwrap();
+        path.push(".oxc/");
+        path.push("plugins");
+        plugin.replace(LinterPlugin::new(schema(), &path).unwrap());
     }
 
     pub fn run_full(&self, root_uri: &Url) -> Vec<(PathBuf, Vec<DiagnosticReport>)> {
@@ -332,7 +375,12 @@ impl ServerLinter {
             ..LintOptions::default()
         };
 
-        IsolatedLintHandler::new(Arc::new(options), Arc::clone(&self.linter)).run_full()
+        IsolatedLintHandler::new(
+            Arc::new(options),
+            Arc::clone(&self.linter),
+            Arc::clone(&self.plugin),
+        )
+        .run_full()
     }
 
     pub fn run_single(&self, root_uri: &Url, uri: &Url) -> Option<Vec<DiagnosticReport>> {
@@ -344,7 +392,11 @@ impl ServerLinter {
             ..LintOptions::default()
         };
 
-        IsolatedLintHandler::new(Arc::new(options), Arc::clone(&self.linter))
-            .run_single(&uri.to_file_path().unwrap())
+        IsolatedLintHandler::new(
+            Arc::new(options),
+            Arc::clone(&self.linter),
+            Arc::clone(&self.plugin),
+        )
+        .run_single(&uri.to_file_path().unwrap())
     }
 }

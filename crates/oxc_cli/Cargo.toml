@@ -1,6 +1,6 @@
 [package]
 name                   = "oxc_cli"
-version                = "0.0.0"
+version                = "0.1.0"
 publish                = false
 authors.workspace      = true
 description.workspace  = true
@@ -30,11 +30,19 @@ oxc_linter         = { workspace = true }
 oxc_parser         = { workspace = true }
 oxc_span           = { workspace = true }
 oxc_type_synthesis = { workspace = true }
+oxc_query          = { workspace = true }
+oxc_semantic       = { workspace = true }
 
 # TODO temp, for type check output, replace with Miette
 codespan-reporting = "0.11.1"
 
-ignore = { workspace = true, features = ["simd-accel"] }
-miette = { workspace = true, features = ["fancy-no-backtrace"] }
-rayon  = { workspace = true }
-bpaf   = { workspace = true, features = ["derive", "autocomplete", "bright-color"] }
+ignore         = { workspace = true, features = ["simd-accel"] }
+miette         = { workspace = true, features = ["fancy-no-backtrace"] }
+rayon          = { workspace = true }
+serde          = { workspace = true, features = ["derive"] }
+bpaf           = { workspace = true, features = ["derive", "autocomplete", "bright-color"] }
+mini-v8        = { path = "/home/u9g/code/8-18-23/mini-v8" }
+trustfall      = { workspace = true }
+serde_yaml     = "0.9.22"
+located_yaml   = "0.2.1"
+path-calculate = "0.1.3"

@@ -17,7 +17,7 @@ mod service;
 
 use std::{self, fs, io::Write, rc::Rc, time::Duration};
 
-pub use fixer::{FixResult, Fixer, Message};
+pub use fixer::{Fix, FixResult, Fixer, Message};
 pub(crate) use oxc_semantic::AstNode;
 use rustc_hash::FxHashMap;
 

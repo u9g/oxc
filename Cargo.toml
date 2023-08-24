@@ -28,6 +28,7 @@ oxc_parser      = { version = "0.1.0", path = "crates/oxc_parser" }
 oxc_semantic    = { version = "0.1.0", path = "crates/oxc_semantic" }
 oxc_span        = { version = "0.1.0", path = "crates/oxc_span" }
 oxc_syntax      = { version = "0.1.0", path = "crates/oxc_syntax" }
+oxc_cli         = { version = "0.1.0", path = "crates/oxc_cli" }
 
 # publish = false
 oxc_macros         = { path = "crates/oxc_macros" }
@@ -106,3 +107,15 @@ panic         = "abort"   # Let it crash and force ourselves to write safe Rust.
 inherits = "release"
 strip    = false
 debug    = true
+
+[profile.dev.package.'*']
+opt-level        = 3
+debug-assertions = true
+overflow-checks  = true
+codegen-units    = 16
+
+[profile.test.package.'*']
+opt-level        = 3
+debug-assertions = true
+overflow-checks  = true
+codegen-units    = 16
